@@ -65,6 +65,7 @@ app.use('/leads', require('./routes/leadRoutes'));
 app.use('/staff', require('./routes/staffRoutes'));
 app.use('/tasks', require('./routes/taskRoutes'));
 app.use('/attendance', require('./routes/attendanceRoutes'));
+app.use('/settings', require('./routes/settingRoutes'));
 app.use('/payroll', require('./routes/payrollRoutes'));
 app.use('/departments', require('./routes/departmentRoutes'));
 app.use('/roles', require('./routes/roleRoutes'));

@@ -1,13 +1,23 @@
 const Attendance = require('../models/Attendance');
 const User = require('../models/User');
+const Setting = require('../models/Setting');
 
 // Helper to calculate hours between two "HH:mm" strings
 const calculateHours = (start, end) => {
   if (!start || !end || start === '--:--' || end === '--:--') return 0;
-  const [sH, sM] = start.split(':').map(Number);
-  const [eH, eM] = end.split(':').map(Number);
+  
+  // Clean up input and take first part (HH:mm) if there's secondary text
+  const sMatch = String(start).match(/(\d{1,2}):(\d{2})/);
+  const eMatch = String(end).match(/(\d{1,2}):(\d{2})/);
+  if (!sMatch || !eMatch) return 0;
+
+  const sH = parseInt(sMatch[1]);
+  const sM = parseInt(sMatch[2]);
+  const eH = parseInt(eMatch[1]);
+  const eM = parseInt(eMatch[2]);
+
   const diff = (eH * 60 + eM) - (sH * 60 + sM);
-  return diff > 0 ? (diff / 60).toFixed(2) : 0;
+  return diff > 0 ? parseFloat((diff / 60).toFixed(2)) : 0;
 };
 
 // @desc    Check-in or Update check-out
@@ -16,9 +26,9 @@ const calculateHours = (start, end) => {
 const postAttendance = async (req, res) => {
   const { date, checkIn, checkOut, status, userId: bodyUserId, location } = req.body;
   
-  // Only Admin/HR/Manager can update another user's attendance
+  // Only Admin/HR/Manager/CEO can update another user's attendance
   let targetUserId = req.user._id;
-  if (bodyUserId && ['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+  if (bodyUserId && ['Admin', 'HR', 'Manager', 'CEO'].includes(req.user.role)) {
     targetUserId = bodyUserId;
   }
 
@@ -44,11 +54,20 @@ const postAttendance = async (req, res) => {
       // Logic for New Check-in
       const timeStr = checkIn || new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
       
-      // Auto-determine status if not provided (Late if after 09:30)
+      // Auto-determine status if not provided
       let finalStatus = status || 'Present';
-      const [h, m] = timeStr.split(':').map(Number);
-      if (!status && (h > 9 || (h === 9 && m > 30))) {
-          finalStatus = 'Late';
+      
+      if (!status) {
+          const settings = await Setting.findOne() || { officeStartTime: '09:00', gracePeriod: 30 }; // Default if no settings found
+          const [sH, sM] = settings.officeStartTime.split(':').map(Number);
+          const [h, m] = timeStr.split(':').map(Number);
+          
+          const checkInMinutes = h * 60 + m;
+          const lateThresholdMinutes = sH * 60 + sM + settings.gracePeriod;
+
+          if (checkInMinutes > lateThresholdMinutes) {
+              finalStatus = 'Late';
+          }
       }
 
       const newAttendance = await Attendance.create({
@@ -70,11 +89,13 @@ const postAttendance = async (req, res) => {
 // @route   GET /api/attendance
 // @access  Private
 const getAttendance = async (req, res) => {
-  const { date, month, year } = req.query;
+  const { date, month, year, userId } = req.query;
   try {
     let query = {};
-    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+    if (!['Admin', 'HR', 'Manager', 'CEO'].includes(req.user.role)) {
       query = { user: req.user._id };
+    } else if (userId) {
+      query = { user: userId };
     }
 
     if (date) {
@@ -90,7 +111,30 @@ const getAttendance = async (req, res) => {
     const attendance = await Attendance.find(query)
       .populate('user', 'name role employeeId email')
       .sort({ date: -1 });
-    res.json(attendance);
+
+    const settings = await Setting.findOne() || { officeEndTime: '18:00' };
+    const [seH, seM] = settings.officeEndTime.split(':').map(Number);
+    const endMinutes = seH * 60 + seM;
+
+    const formattedAttendance = attendance.map(record => {
+      const doc = record.toObject();
+      // If checked in but not checked out, calculate running hours
+      if (doc.checkIn !== '--:--' && doc.checkOut === '--:--' && new Date(doc.date).toDateString() === new Date().toDateString()) {
+        const now = new Date();
+        const nowH = now.getHours();
+        const nowM = now.getMinutes();
+        const nowMinutes = nowH * 60 + nowM;
+
+        const effectiveEndMinutes = Math.min(nowMinutes, endMinutes);
+        const effectiveEndStr = `${Math.floor(effectiveEndMinutes / 60).toString().padStart(2, '0')}:${(effectiveEndMinutes % 60).toString().padStart(2, '0')}`;
+        
+        doc.totalHours = calculateHours(doc.checkIn, effectiveEndStr);
+        doc.isRunning = nowMinutes < endMinutes;
+      }
+      return doc;
+    });
+
+    res.json(formattedAttendance);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -106,8 +150,29 @@ const getDailyReport = async (req, res) => {
     const allStaff = await User.find({}, 'name role employeeId');
     const attendance = await Attendance.find({ date: targetDate }).populate('user', 'name role employeeId');
     
+    const settings = await Setting.findOne() || { officeEndTime: '18:00' };
+    const [seH, seM] = settings.officeEndTime.split(':').map(Number);
+    const endMinutes = seH * 60 + seM;
+
     const details = allStaff.map(staff => {
       const record = attendance.find(a => a.user && a.user._id.toString() === staff._id.toString());
+      
+      let displayHours = record?.totalHours || 0;
+      let isRunning = false;
+
+      if (record?.checkIn && record?.checkIn !== '--:--' && record?.checkOut === '--:--' && targetDate.toDateString() === new Date().toDateString()) {
+          const now = new Date();
+          const nowH = now.getHours();
+          const nowM = now.getMinutes();
+          const nowMinutes = nowH * 60 + nowM;
+
+          const effectiveEndMinutes = Math.min(nowMinutes, endMinutes);
+          const effectiveEndStr = `${Math.floor(effectiveEndMinutes / 60).toString().padStart(2, '0')}:${(effectiveEndMinutes % 60).toString().padStart(2, '0')}`;
+          
+          displayHours = calculateHours(record.checkIn, effectiveEndStr);
+          isRunning = nowMinutes < endMinutes;
+      }
+
       return {
         _id: record?._id || null,
         user: staff,
@@ -115,7 +180,8 @@ const getDailyReport = async (req, res) => {
         checkIn: record?.checkIn || '--:--',
         checkOut: record?.checkOut || '--:--',
         status: record?.status || 'Absent',
-        totalHours: record?.totalHours || 0
+        totalHours: displayHours,
+        isRunning
       };
     });
 
@@ -137,7 +203,11 @@ const getDailyReport = async (req, res) => {
 const getAttendanceSummary = async (req, res) => {
   try {
     const { month, year, userId } = req.query;
-    const targetUserId = userId || req.user._id;
+    let targetUserId = req.user._id;
+    
+    if (userId && ['Admin', 'HR', 'Manager', 'CEO'].includes(req.user.role)) {
+        targetUserId = userId;
+    }
     
     const m = month ? parseInt(month) : new Date().getMonth() + 1;
     const y = year ? parseInt(year) : new Date().getFullYear();

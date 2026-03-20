@@ -37,13 +37,13 @@ const updateStaff = async (req, res) => {
 
     if (staff) {
       // Check if updating self or is admin/HR
-      if (req.user.role === 'Admin' || req.user.role === 'HR' || req.user._id.toString() === staff._id.toString()) {
+      if (['Admin', 'HR', 'CEO'].includes(req.user.role) || req.user._id.toString() === staff._id.toString()) {
         staff.name = req.body.name || staff.name;
         staff.email = req.body.email || staff.email;
         staff.phone = req.body.phone || staff.phone;
         
         // Only Admin/HR can update these fields
-        if (req.user.role === 'Admin' || req.user.role === 'HR') {
+        if (['Admin', 'HR', 'CEO'].includes(req.user.role)) {
           staff.department = req.body.department || staff.department;
           staff.role = req.body.role || staff.role;
           staff.salary = req.body.salary || staff.salary;

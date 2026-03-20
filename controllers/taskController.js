@@ -6,7 +6,7 @@ const Task = require('../models/Task');
 const getTasks = async (req, res) => {
   try {
     let query = {};
-    if (!['Admin', 'HR', 'Manager'].includes(req.user.role)) {
+    if (!['Admin', 'HR', 'Manager', 'CEO'].includes(req.user.role)) {
       query = { 
         $or: [
           { assignedTo: req.user._id },
@@ -75,7 +75,7 @@ const updateTask = async (req, res) => {
     if (!task) return res.status(404).json({ message: 'Task not found' });
 
     const oldStatus = task.status;
-    const canUpdateAll = ['Admin', 'HR', 'Manager'].includes(req.user.role);
+    const canUpdateAll = ['Admin', 'HR', 'Manager', 'CEO'].includes(req.user.role);
     const isAssigned = task.assignedTo.toString() === req.user._id.toString();
 
     if (canUpdateAll) {

@@ -15,7 +15,7 @@ router.route('/')
   .get(protect, getAttendance);
 
 router.get('/summary', protect, getAttendanceSummary);
-router.get('/report/daily', protect, authorize('Admin', 'HR', 'Manager'), getDailyReport);
+router.get('/report/daily', protect, authorize('Admin', 'HR', 'Manager', 'CEO'), getDailyReport);
 router.post('/leave', protect, requestLeave);
 
 module.exports = router;

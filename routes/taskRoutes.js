@@ -14,7 +14,7 @@ router.route('/')
 router.route('/:id')
   .get(protect, getTaskById)
   .put(protect, updateTask)
-  .delete(protect, authorize('Admin'), deleteTask);
+  .delete(protect, authorize('Admin', 'CEO'), deleteTask);
 
 router.route('/:id/comments')
   .post(protect, addComment);

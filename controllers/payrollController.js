@@ -18,60 +18,87 @@ const getPayroll = async (req, res) => {
 // @desc    Create/Update payroll for an employee
 // @route   POST /api/payroll
 // @access  Private (Admin/HR)
+const calculateDetailedSalary = async (uId, salStruct, monthStr) => {
+  const dateObj = new Date(monthStr);
+  if (isNaN(dateObj.getTime())) {
+    const [mStr, yStr] = monthStr.split(' ');
+    const mIdx = new Date(Date.parse(mStr + " 1, 2012")).getMonth();
+    dateObj.setMonth(mIdx);
+    dateObj.setFullYear(parseInt(yStr));
+  }
+
+  const m = dateObj.getMonth();
+  const y = dateObj.getFullYear();
+  const startOfMonth = new Date(y, m, 1);
+  const endOfMonth = new Date(y, m + 1, 0, 23, 59, 59);
+
+  const attendances = await Attendance.find({
+    user: uId,
+    date: { $gte: startOfMonth, $lte: endOfMonth }
+  });
+
+  const dailyRate = (salStruct.basicSalary || 0) / 30;
+  const absentDays = attendances.filter(a => a.status === 'Absent').length;
+  const lateDays = attendances.filter(a => a.status === 'Late').length;
+  
+  const attendanceDeduction = absentDays * dailyRate;
+  const lateDeduction = lateDays * (dailyRate * 0.1);
+
+  const adjustedBasic = Math.max(0, (salStruct.basicSalary || 0) - attendanceDeduction - lateDeduction);
+  
+  const totalAllowances = salStruct.allowances || 0;
+  const totalPF = salStruct.pf || 0;
+  const totalTax = salStruct.tax || 0;
+  const totalInsurance = salStruct.insurance || 0;
+  const structDeductions = salStruct.deductions || 0;
+
+  return {
+    basicSalary: Math.round(adjustedBasic),
+    allowances: totalAllowances,
+    pf: totalPF,
+    tax: totalTax,
+    insurance: totalInsurance,
+    structDeductions,
+    paymentType: salStruct.paymentType || 'monthly'
+  };
+};
+
+const createInitialPayroll = async (userId) => {
+  const user = await User.findById(userId);
+  if (!user) return null;
+
+  const targetMonth = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+  const breakdown = {
+    basicSalary: user.salaryStructure.basicSalary || 0,
+    allowances: user.salaryStructure.allowances || 0,
+    pf: user.salaryStructure.pf || 0,
+    tax: user.salaryStructure.tax || 0,
+    insurance: user.salaryStructure.insurance || 0,
+    structDeductions: user.salaryStructure.deductions || 0,
+    paymentType: user.salaryStructure.paymentType || 'monthly'
+  };
+
+  const netSalary = (breakdown.basicSalary + breakdown.allowances) - (breakdown.structDeductions + breakdown.pf + breakdown.tax + breakdown.insurance);
+
+  return await Payroll.create({
+    user: user._id,
+    month: targetMonth,
+    ...breakdown,
+    bonus: 0,
+    deductions: breakdown.structDeductions,
+    netSalary: Math.round(netSalary),
+    paymentStatus: 'Pending'
+  });
+};
+
+// @desc    Create/Update payroll for an employee
+// @route   POST /api/payroll
+// @access  Private (Admin/HR)
 const processPayroll = async (req, res) => {
-  const { userId, month, bonus, deductions, paymentStatus } = req.body || {};
+  const { userId, month, bonus, deductions, paymentStatus, paymentMethod } = req.body || {};
   const targetMonth = month || new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
   try {
-    const calculateDetailedSalary = async (uId, salStruct, monthStr) => {
-      const dateObj = new Date(monthStr);
-      if (isNaN(dateObj.getTime())) {
-        // Fallback for "March 2026" type strings
-        const [mStr, yStr] = monthStr.split(' ');
-        const mIdx = new Date(Date.parse(mStr + " 1, 2012")).getMonth();
-        dateObj.setMonth(mIdx);
-        dateObj.setFullYear(parseInt(yStr));
-      }
-
-      const m = dateObj.getMonth();
-      const y = dateObj.getFullYear();
-      const startOfMonth = new Date(y, m, 1);
-      const endOfMonth = new Date(y, m + 1, 0, 23, 59, 59);
-
-      const attendances = await Attendance.find({
-        user: uId,
-        date: { $gte: startOfMonth, $lte: endOfMonth }
-      });
-
-      const totalDaysInMonth = new Date(y, m + 1, 0).getDate();
-      // Assume 30 days divisor for daily rate as per user request example
-      const dailyRate = (salStruct.basicSalary || 0) / 30;
-
-      const absentDays = attendances.filter(a => a.status === 'Absent').length;
-      const lateDays = attendances.filter(a => a.status === 'Late').length;
-      
-      const attendanceDeduction = absentDays * dailyRate;
-      const lateDeduction = lateDays * (dailyRate * 0.1); // Small deduction for late as per requirement
-
-      const adjustedBasic = Math.max(0, (salStruct.basicSalary || 0) - attendanceDeduction - lateDeduction);
-      
-      const totalAllowances = salStruct.allowances || 0;
-      const totalPF = salStruct.pf || 0;
-      const totalTax = salStruct.tax || 0;
-      const totalInsurance = salStruct.insurance || 0;
-      const structDeductions = salStruct.deductions || 0;
-
-      return {
-        basicSalary: Math.round(adjustedBasic),
-        allowances: totalAllowances,
-        pf: totalPF,
-        tax: totalTax,
-        insurance: totalInsurance,
-        structDeductions,
-        paymentType: salStruct.paymentType || 'monthly'
-      };
-    };
-
     if (!userId) {
       const users = await User.find({});
       const results = [];
@@ -119,7 +146,10 @@ const processPayroll = async (req, res) => {
       payroll.insurance = breakdown.insurance;
       payroll.netSalary = Math.round(netSalary);
       payroll.paymentStatus = paymentStatus || payroll.paymentStatus;
-      if (paymentStatus === 'Paid') payroll.paymentDate = Date.now();
+      if (paymentStatus === 'Paid') {
+        payroll.paymentDate = Date.now();
+        payroll.paymentMethod = paymentMethod || payroll.paymentMethod;
+      }
       
       const updatedPayroll = await payroll.save();
       return res.json(updatedPayroll);
@@ -133,7 +163,8 @@ const processPayroll = async (req, res) => {
         deductions: resolvedDeductions,
         netSalary: Math.round(netSalary),
         paymentStatus: paymentStatus || 'Pending',
-        paymentDate: paymentStatus === 'Paid' ? Date.now() : null
+        paymentDate: paymentStatus === 'Paid' ? Date.now() : null,
+        paymentMethod: paymentStatus === 'Paid' ? paymentMethod : null
       });
       return res.status(201).json(newPayroll);
     }
@@ -231,5 +262,6 @@ module.exports = {
   getMyPayroll,
   updateSalaryStructure,
   getPayrollStats,
-  sendPayslipEmail
+  sendPayslipEmail,
+  createInitialPayroll
 };
