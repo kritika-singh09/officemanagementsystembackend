@@ -46,8 +46,14 @@ const updateStaff = async (req, res) => {
         if (['Admin', 'HR', 'CEO'].includes(req.user.role)) {
           staff.department = req.body.department || staff.department;
           staff.role = req.body.role || staff.role;
-          staff.salary = req.body.salary || staff.salary;
           staff.status = req.body.status || staff.status;
+          
+          if (req.body.salary !== undefined) {
+             staff.salaryStructure = {
+               ...staff.salaryStructure,
+               basicSalary: Number(req.body.salary)
+             };
+          }
         }
 
         if (req.body.password) {
@@ -55,13 +61,7 @@ const updateStaff = async (req, res) => {
         }
 
         const updatedStaff = await staff.save();
-        res.json({
-          _id: updatedStaff._id,
-          name: updatedStaff.name,
-          email: updatedStaff.email,
-          role: updatedStaff.role,
-          department: updatedStaff.department
-        });
+        res.json(updatedStaff);
       } else {
         res.status(403).json({ message: 'Not authorized to update this profile' });
       }

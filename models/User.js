@@ -34,6 +34,19 @@ const userSchema = new mongoose.Schema({
     pf: { type: Number, default: 0 },
     insurance: { type: Number, default: 0 },
     tax: { type: Number, default: 0 }
+  },
+  department: {
+    type: String,
+    trim: true
+  },
+  phone: {
+    type: String,
+    trim: true
+  },
+  status: {
+    type: String,
+    enum: ['Active', 'Inactive'],
+    default: 'Active'
   }
 }, { timestamps: true });
 

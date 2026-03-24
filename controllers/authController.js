@@ -4,7 +4,7 @@ const { createInitialPayroll } = require('./payrollController');
 
 // @desc    Register a new user
 const registerUser = async (req, res) => {
-  const { name, email, password, role, employeeId, salaryStructure } = req.body;
+  const { name, email, password, role, employeeId, salary, department, phone, status } = req.body;
   try {
     const userExists = await User.findOne({ email });
     if (userExists) return res.status(400).json({ message: 'User already exists' });
@@ -15,7 +15,16 @@ const registerUser = async (req, res) => {
       password, 
       role, 
       employeeId,
-      salaryStructure: salaryStructure || { basicSalary: 0 }
+      salaryStructure: { 
+        basicSalary: Number(salary) || 0,
+        allowances: 0,
+        pf: 0,
+        tax: 0,
+        paymentType: 'monthly'
+      },
+      department,
+      phone,
+      status: status || 'Active'
     });
 
     if (user) {
