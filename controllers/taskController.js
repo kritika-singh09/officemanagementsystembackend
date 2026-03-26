@@ -59,7 +59,6 @@ const createTask = async (req, res) => {
       }]
     });
     const populatedTask = await Task.findById(task._id).populate('assignedTo', 'name role email');
-    if (req.app.get('io')) req.app.get('io').emit('task_created', populatedTask);
     res.status(201).json(populatedTask);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -113,7 +112,6 @@ const updateTask = async (req, res) => {
 
     await task.save();
     const populatedTask = await Task.findById(task._id).populate('assignedTo', 'name role email');
-    if (req.app.get('io')) req.app.get('io').emit('task_updated', populatedTask);
     res.json(populatedTask);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -126,7 +124,6 @@ const deleteTask = async (req, res) => {
     const task = await Task.findById(req.params.id);
     if (task) {
       await task.deleteOne();
-      if (req.app.get('io')) req.app.get('io').emit('task_deleted', req.params.id);
       res.json({ message: 'Task removed' });
     } else {
       res.status(404).json({ message: 'Task not found' });
@@ -145,7 +142,6 @@ const addComment = async (req, res) => {
       task.activities.push({ activityType: 'Comment', note: 'Added a new comment.', staff: req.user._id });
       await task.save();
       const updatedTask = await Task.findById(task._id).populate('assignedTo', 'name role email').populate('comments.user', 'name role');
-      if (req.app.get('io')) req.app.get('io').emit('task_updated', updatedTask);
       res.json(updatedTask);
     } else {
       res.status(404).json({ message: 'Task not found' });
@@ -165,7 +161,6 @@ const uploadAttachment = async (req, res) => {
       task.activities.push({ activityType: 'Attachment', note: `Uploaded file: ${req.file.originalname}`, staff: req.user._id });
       await task.save();
       const updatedTask = await Task.findById(task._id).populate('assignedTo', 'name role email');
-      if (req.app.get('io')) req.app.get('io').emit('task_updated', updatedTask);
       res.status(201).json(updatedTask);
     } else {
       res.status(404).json({ message: 'Task not found' });

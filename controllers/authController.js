@@ -70,8 +70,20 @@ const loginUser = async (req, res) => {
 // @desc    Get next employee ID
 const getNextEmployeeId = async (req, res) => {
   try {
-    const count = await User.countDocuments();
-    const nextId = `EMP${(count + 1).toString().padStart(3, '0')}`;
+    // Find all users and extract the highest ID number
+    const users = await User.find({}, 'employeeId');
+    let maxNum = 0;
+
+    users.forEach(user => {
+      if (user.employeeId && user.employeeId.startsWith('EMP')) {
+        const num = parseInt(user.employeeId.replace('EMP', ''));
+        if (!isNaN(num) && num > maxNum) {
+          maxNum = num;
+        }
+      }
+    });
+
+    const nextId = `EMP${(maxNum + 1).toString().padStart(3, '0')}`;
     res.json({ nextId });
   } catch (error) {
     res.status(500).json({ message: error.message });

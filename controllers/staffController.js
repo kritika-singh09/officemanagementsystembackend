@@ -5,7 +5,9 @@ const User = require('../models/User');
 // @access  Private (Admin/HR)
 const getStaff = async (req, res) => {
   try {
-    const staff = await User.find({}).select('-password');
+    const { department } = req.query;
+    const query = department ? { department } : {};
+    const staff = await User.find(query).select('-password');
     res.json(staff);
   } catch (error) {
     res.status(500).json({ message: error.message });

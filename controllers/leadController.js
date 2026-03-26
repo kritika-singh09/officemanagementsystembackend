@@ -1,4 +1,5 @@
 const Lead = require('../models/Lead');
+const User = require('../models/User');
 const { Parser } = require('json2csv');
 const csvParser = require('csv-parser');
 const fs = require('fs');
@@ -43,6 +44,32 @@ const createLead = async (req, res) => {
       }]
     });
 
+    // Notify assignee if someone else assigned it to them
+    if (lead.assignedTo && lead.assignedTo.toString() !== req.user._id.toString()) {
+      try {
+        const assignee = await User.findById(lead.assignedTo);
+        if (assignee) {
+          const io = req.app.get('io');
+          if (io) {
+            io.to(assignee._id.toString()).emit('notification', {
+              title: 'New Lead Assigned',
+              message: `You have been assigned a new lead: ${lead.name}`,
+              type: 'lead_assigned'
+            });
+          }
+          if (assignee.email) {
+            sendEmail({
+              to: assignee.email,
+              subject: 'New Lead Assigned to You',
+              text: `Hello ${assignee.name},\n\nYou have been assigned a new lead: ${lead.name} (${lead.companyName || 'No Company'}).\nPlease check the CRM dashboard to view details.`
+            }).catch(e => console.error("Notification Email Error:", e));
+          }
+        }
+      } catch (notifyErr) {
+        console.error("Failed to notify user:", notifyErr);
+      }
+    }
+
     res.status(201).json(lead);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -58,6 +85,7 @@ const updateLead = async (req, res) => {
 
     if (lead) {
       const oldStatus = lead.status;
+      const oldAssignedTo = lead.assignedTo ? lead.assignedTo.toString() : null;
       
       lead.name = req.body.name || lead.name;
       lead.companyName = req.body.companyName || lead.companyName;
@@ -76,8 +104,36 @@ const updateLead = async (req, res) => {
         lead.activities.push({
           type: 'Status Change',
           note: `Status changed from ${oldStatus} to ${lead.status}`,
-          staff: req.user._id
+          staff: req.user ? req.user._id : null
         });
+      }
+
+      // Notify new assignee if changed
+      if (req.body.assignedTo &&
+          req.body.assignedTo.toString() !== oldAssignedTo &&
+          (!req.user || req.body.assignedTo.toString() !== req.user._id.toString())) {
+        try {
+          const assignee = await User.findById(req.body.assignedTo);
+          if (assignee) {
+            const io = req.app.get('io');
+            if (io) {
+              io.to(assignee._id.toString()).emit('notification', {
+                title: 'Lead Reassigned',
+                message: `Lead ${lead.name} has been reassigned to you.`,
+                type: 'lead_assigned'
+              });
+            }
+            if (assignee.email) {
+              sendEmail({
+                to: assignee.email,
+                subject: 'Lead Reassigned to You',
+                text: `Hello ${assignee.name},\n\nThe lead ${lead.name} (${lead.companyName || 'No Company'}) has been reassigned to you.\nPlease check the CRM dashboard.`
+              }).catch(e => console.error("Notification Email Error:", e));
+            }
+          }
+        } catch (notifyErr) {
+          console.error("Failed to notify user:", notifyErr);
+        }
       }
 
       const updatedLead = await lead.save();
@@ -261,28 +317,41 @@ const importLeads = async (req, res) => {
 
     const leads = [];
     fs.createReadStream(req.file.path)
-      .pipe(csvParser())
-      .on('data', (data) => leads.push({
-        name: data.name,
-        companyName: data.companyName,
-        email: data.email,
-        phone: data.phone,
-        source: data.source || 'Website',
-        status: data.status || 'New',
-        score: parseInt(data.score) || 0,
-        notes: data.notes,
-        assignedTo: req.user._id // Assign to the person importing
-      }))
+      .pipe(csvParser({ mapHeaders: ({ header }) => header.trim().toLowerCase() }))
+      .on('data', (data) => {
+        const name = data.name || data['full name'] || data['contact name'];
+        const phone = data.phone || data['phone number'] || data.mobile || data.contact;
+
+        if (name && phone) {
+          leads.push({
+            name,
+            companyName: data.companyname || data.company || data['company name'] || '',
+            email: data.email || data['email address'] || '',
+            phone,
+            source: data.source || 'Website',
+            status: data.status || 'New',
+            score: parseInt(data.score) || 0,
+            notes: data.notes || '',
+            assignedTo: req.user._id // Assign to the person importing
+          });
+        }
+      })
       .on('end', async () => {
         try {
+          if (leads.length === 0) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).json({ message: 'No valid leads found. Please ensure CSV has at least "name" and "phone" columns.' });
+          }
           await Lead.insertMany(leads);
-          fs.unlinkSync(req.file.path); // Delete temp file
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); // Delete temp file
           res.status(201).json({ message: `${leads.length} leads imported successfully` });
         } catch (err) {
+          if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
           res.status(400).json({ message: 'Error saving imported leads: ' + err.message });
         }
       });
   } catch (error) {
+    if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
     res.status(500).json({ message: error.message });
   }
 };
