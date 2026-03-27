@@ -1,4 +1,5 @@
 const Task = require('../models/Task');
+const { createNotification } = require('./notificationController');
 
 // @desc    Get all tasks
 // @route   GET /api/tasks
@@ -59,6 +60,19 @@ const createTask = async (req, res) => {
       }]
     });
     const populatedTask = await Task.findById(task._id).populate('assignedTo', 'name role email');
+    
+    // Create notification for assigned user
+    if (assignedTo) {
+      await createNotification(
+        assignedTo,
+        `New task assigned: ${title}`,
+        'task',
+        req.user._id,
+        task._id,
+        req
+      );
+    }
+
     res.status(201).json(populatedTask);
   } catch (error) {
     res.status(400).json({ message: error.message });
@@ -83,6 +97,16 @@ const updateTask = async (req, res) => {
       if (req.body.assignedTo && task.assignedTo.toString() !== req.body.assignedTo) {
         task.activities.push({ activityType: 'Reassigned', note: 'Task reassigned to a different user.', staff: req.user._id });
         task.assignedTo = req.body.assignedTo;
+        
+        // Notify new assignee
+        await createNotification(
+          task.assignedTo,
+          `Task reassigned to you: ${task.title}`,
+          'task',
+          req.user._id,
+          task._id,
+          req
+        );
       }
       task.startDate = req.body.startDate || task.startDate;
       task.deadline = req.body.deadline || task.deadline;

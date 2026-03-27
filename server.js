@@ -73,6 +73,8 @@ app.use('/leaves', require('./routes/leaveRoutes'));
 app.use('/performance', require('./routes/performanceRoutes'));
 app.use('/documents', require('./routes/documentRoutes'));
 app.use('/upload', require('./routes/uploadRoutes'));
+app.use('/notifications', require('./routes/notificationRoutes'));
+app.use('/search', require('./routes/searchRoutes'));
 
 // Serve Build / UI
 const buildPath = path.join(__dirname, "build");

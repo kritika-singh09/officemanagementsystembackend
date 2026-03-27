@@ -5,6 +5,7 @@ const csvParser = require('csv-parser');
 const fs = require('fs');
 const path = require('path');
 const sendEmail = require('../utils/sendEmail');
+const { createNotification } = require('./notificationController');
 
 // @desc    Get all leads
 // @route   GET /api/leads
@@ -46,27 +47,27 @@ const createLead = async (req, res) => {
 
     // Notify assignee if someone else assigned it to them
     if (lead.assignedTo && lead.assignedTo.toString() !== req.user._id.toString()) {
+      await createNotification(
+        lead.assignedTo,
+        `You have been assigned a new lead: ${lead.name}`,
+        'lead',
+        req.user._id,
+        lead._id,
+        req
+      );
+
+      // Email notification (optional, keep if desired)
       try {
         const assignee = await User.findById(lead.assignedTo);
-        if (assignee) {
-          const io = req.app.get('io');
-          if (io) {
-            io.to(assignee._id.toString()).emit('notification', {
-              title: 'New Lead Assigned',
-              message: `You have been assigned a new lead: ${lead.name}`,
-              type: 'lead_assigned'
-            });
-          }
-          if (assignee.email) {
-            sendEmail({
-              to: assignee.email,
-              subject: 'New Lead Assigned to You',
-              text: `Hello ${assignee.name},\n\nYou have been assigned a new lead: ${lead.name} (${lead.companyName || 'No Company'}).\nPlease check the CRM dashboard to view details.`
-            }).catch(e => console.error("Notification Email Error:", e));
-          }
+        if (assignee && assignee.email) {
+          sendEmail({
+            to: assignee.email,
+            subject: 'New Lead Assigned to You',
+            text: `Hello ${assignee.name},\n\nYou have been assigned a new lead: ${lead.name} (${lead.companyName || 'No Company'}).\nPlease check the CRM dashboard to view details.`
+          }).catch(e => console.error("Notification Email Error:", e));
         }
-      } catch (notifyErr) {
-        console.error("Failed to notify user:", notifyErr);
+      } catch (err) {
+        console.error("Email notification failed:", err);
       }
     }
 
@@ -112,27 +113,28 @@ const updateLead = async (req, res) => {
       if (req.body.assignedTo &&
           req.body.assignedTo.toString() !== oldAssignedTo &&
           (!req.user || req.body.assignedTo.toString() !== req.user._id.toString())) {
+        
+        await createNotification(
+          req.body.assignedTo,
+          `Lead ${lead.name} has been reassigned to you.`,
+          'lead',
+          req.user._id,
+          lead._id,
+          req
+        );
+
+        // Email notification (optional)
         try {
           const assignee = await User.findById(req.body.assignedTo);
-          if (assignee) {
-            const io = req.app.get('io');
-            if (io) {
-              io.to(assignee._id.toString()).emit('notification', {
-                title: 'Lead Reassigned',
-                message: `Lead ${lead.name} has been reassigned to you.`,
-                type: 'lead_assigned'
-              });
-            }
-            if (assignee.email) {
-              sendEmail({
-                to: assignee.email,
-                subject: 'Lead Reassigned to You',
-                text: `Hello ${assignee.name},\n\nThe lead ${lead.name} (${lead.companyName || 'No Company'}) has been reassigned to you.\nPlease check the CRM dashboard.`
-              }).catch(e => console.error("Notification Email Error:", e));
-            }
+          if (assignee && assignee.email) {
+            sendEmail({
+              to: assignee.email,
+              subject: 'Lead Reassigned to You',
+              text: `Hello ${assignee.name},\n\nThe lead ${lead.name} (${lead.companyName || 'No Company'}) has been reassigned to you.\nPlease check the CRM dashboard.`
+            }).catch(e => console.error("Notification Email Error:", e));
           }
-        } catch (notifyErr) {
-          console.error("Failed to notify user:", notifyErr);
+        } catch (err) {
+          console.error("Email notification failed:", err);
         }
       }
 

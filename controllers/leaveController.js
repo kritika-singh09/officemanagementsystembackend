@@ -1,6 +1,7 @@
 const Leave = require('../models/Leave');
 const sendEmail = require('../utils/emailService');
 const User = require('../models/User');
+const { createNotification } = require('./notificationController');
 
 exports.getLeaves = async (req, res) => {
   try {
@@ -31,6 +32,20 @@ exports.applyLeave = async (req, res) => {
       reason
     });
     const savedLeave = await newLeave.save();
+    
+    // Notify Admin/HR about new leave request
+    const admins = await User.find({ role: { $in: ['Admin', 'HR'] } });
+    for (const admin of admins) {
+      await createNotification(
+        admin._id,
+        `New leave request from user ${userId}`,
+        'leave',
+        userId,
+        savedLeave._id,
+        req
+      );
+    }
+
     res.status(201).json(savedLeave);
   } catch (error) {
     res.status(400).json({ message: 'Error applying for leave', error: error.message });
@@ -48,13 +63,25 @@ exports.updateLeaveStatus = async (req, res) => {
     
     if (!leave) return res.status(404).json({ message: 'Leave not found' });
 
-    // Send notification
+    // Send notification (Email)
     if (leave.user && leave.user.email) {
       await sendEmail({
         email: leave.user.email,
         subject: `Leave Request ${status}`,
         message: `Your leave request from ${new Date(leave.startDate).toLocaleDateString()} to ${new Date(leave.endDate).toLocaleDateString()} has been ${status}.`
       });
+    }
+
+    // Send In-app notification
+    if (leave.user) {
+      await createNotification(
+        leave.user._id,
+        `Your leave request has been ${status}`,
+        'leave',
+        req.user._id,
+        leave._id,
+        req
+      );
     }
 
     res.json(leave);
